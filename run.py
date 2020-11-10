@@ -2,17 +2,18 @@
 
 import urllib.request
 import xml.etree.ElementTree as ET 
+import re
   
-def loadRSS(): 
+def loadRSS(url, file): 
   
     # url of rss feed 
-    url = 'https://forecast.weather.gov/MapClick.php?lat=36.0812&lon=-95.9234&FcstType=digitalDWML'
-  
+    #url = 'https://forecast.weather.gov/MapClick.php?lat=36.0812&lon=-95.9234&FcstType=digitalDWML'
+    #url = 'https://forecast.weather.gov/MapClick.php?lat=36.1747&lon=-95.9398&unit=0&lg=english&FcstType=dwml'
     # creating HTTP response object from given url 
     resp = urllib.request.urlopen(url) 
   
     # saving the xml file 
-    with open('forecast.xml', 'wb') as f: 
+    with open(file, 'wb') as f: 
         f.write(resp.read()) 
           
   
@@ -62,53 +63,168 @@ def parseXML(xmlfile, xpath):
         
     # return news items list
     return timelayouts
-  
+
+class datec:
+    date_str = None
+    date = None
+    periodname = None
+    def __init__(self, date):
+        from datetime import datetime
+        self.date_str = date.decode()
+        self.date = datetime.strptime(self.date_str, "%Y-%m-%dT%H:%M:%S-06:00")
+
+class timeframes:
+    dates = None
+    layoutkey = None
+    def __init__(self):
+        self.dates = []
+    def adddate(self, date):
+        self.dates.append(datec(date))
+    def addlayoutkey(self,layoutkey):
+        self.layoutkey = layoutkey.decode()
+
+
 class forecast:
     date = None
-    dewpoint = None
-    windchill = None
+    layoutkey = None
     temperature = None
-    windspeed = None
-    winddirection = None
     weatherconditions = None
+    probabilityofprecipitation = None
+    icon = None
 
-    def __init__(self,date,dewpoint,windchill,temperature,windspeed,winddirection,weatherconditions):
+    def __init__(self,date,layoutkey):
         self.date = date
-        self.dewpoint = dewpoint
-        self.windchill = windchill
-        self.temperature = temperature
-        self.windspeed = windspeed
-        self.winddirection = winddirection
-        self.weatherconditions = weatherconditions
+        self.layoutkey = layoutkey
      
 def main(): 
     # load rss from web to update existing xml file 
-    #loadRSS() 
-  
-    # parse xml file 
-    times = parseXML('forecast.xml', './data/time-layout/')
-    dewpoint = parseXML('forecast.xml', "./data/parameters/temperature[@type='dew point']/")
-    windchill = parseXML('forecast.xml', "./data/parameters/temperature[@type='wind chill']/")
-    temperature = parseXML('forecast.xml', "./data/parameters/temperature[@type='hourly']/")
-    windspeedsustained = parseXML('forecast.xml', "./data/parameters/wind-speed[@type='sustained']/")
-    windspeedgust = parseXML('forecast.xml', "./data/parameters/wind-speed[@type='gust']/")
-    winddirection = parseXML('forecast.xml', './data/parameters/direction/')
-    weatherconditions = parseXML('forecast.xml', './data/parameters/weather/')
-
-    from datetime import datetime
-    times.remove(times[0])
+    #loadRSS('https://forecast.weather.gov/MapClick.php?lat=36.1747&lon=-95.9398&unit=0&lg=english&FcstType=dwml','forecast.xml') 
     
+    # parse xml file 
+    fulltimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[1]/")
+    daystimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[2]/")
+    nighttimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[3]/")
+
+    
+
+    
+    
+    #conditionsicon = parseXML('forecast.xml', "./data[@type='forecast']/parameters/conditions-icon[@time-layout='k-p12h-n13-1']/")
+    hazards = parseXML('forecast.xml', "./data[@type='forecast']/parameters/hazards/")
+
+    
+
+    # create full day class
+    fulls = timeframes()
+    for times in fulltimes:
+        for name, value in times.items():
+            if name == 'layout-key':
+                fulls.addlayoutkey(value)
+            else:
+                fulls.adddate(value)
+
+    # create day class
+    days = timeframes()
+    for times in daystimes:
+        for name, value in times.items():
+            if name == 'layout-key':
+                days.addlayoutkey(value)
+            else:
+                days.adddate(value)
+    # create night class
+    nights = timeframes()
+    for times in nighttimes:
+        for name, value in times.items():
+            if name == 'layout-key':
+                nights.addlayoutkey(value)
+            else:
+                nights.adddate(value)
+
+    # populate forecast data into full days.
     forecasts = []
+    probabilityofprecipitation = parseXML('forecast.xml', "./data[@type='forecast']/parameters/probability-of-precipitation[@time-layout='{0}']/".format(fulls.layoutkey))
+    weather = parseXML('forecast.xml', "./data[@type='forecast']/parameters/weather[@time-layout='{0}']/".format(fulls.layoutkey))
+    conditionsicon = parseXML('forecast.xml', "./data[@type='forecast']/parameters/conditions-icon[@time-layout='{0}']/".format(fulls.layoutkey))
+    for i in range(1,len(fulls.dates)):
+        date = fulls.dates[i]
+        
+        
+        if probabilityofprecipitation[i] == None:
+            chance = str(probabilityofprecipitation[i])
+        else:
+            chance = [*probabilityofprecipitation[i].values()][0].decode()
 
-    count = 0
-    for time in times:
-        if 'start-valid-time' in time:
-            date_str = str(time['start-valid-time'])
-            date = datetime.strptime(date_str, "b'%Y-%m-%dT%H:%M:%S-06:00'")
-            forecasts.append(forecast(date, dewpoint[count],windchill[count],temperature[count],windspeedsustained[count],winddirection[count],weatherconditions[count]))
-            count+=1
+        temperature = 'ERROR'
+        for ii in range(len(days.dates)):
+            if fulls.dates[i].date_str == days.dates[ii].date_str:
+                maxtemp = parseXML('forecast.xml', "./data[@type='forecast']/parameters/temperature[@time-layout='{0}']/".format(days.layoutkey))
+                temperature = 'H ' + [*maxtemp[ii+1].values()][0].decode()
 
-    print()
+        for ii in range(len(nights.dates)):
+            if fulls.dates[i].date_str == nights.dates[ii].date_str:
+                mintemp = parseXML('forecast.xml', "./data[@type='forecast']/parameters/temperature[@time-layout='{0}']/".format(nights.layoutkey))
+                temperature = 'L ' + [*mintemp[ii+1].values()][0].decode()
+
+        fc = forecast(fulls.dates[i],fulls.layoutkey)
+        fc.temperature = temperature
+        fc.probabilityofprecipitation = chance
+        fc.weatherconditions = [*weather[i].values()][0]
+        loadRSS([*conditionsicon[i].values()][0].decode(), str(i)+'.png')
+        fc.icon = str(i)+'.png'
+        forecasts.append(fc)
+
+
+    newmethod225(forecasts)
+
+def newmethod225(forecasts):
+    from PIL import Image, ImageDraw, ImageFont
+    # rest of today
+    images = [Image.open(x) for x in ['top-bottom.png', 'sides.png', 'middle.png']]
+    #widths, heights = zip(*(i.size for i in images))
+
+    total_width = 400
+    max_height = 600
+    for i in range(len(forecasts)):
+        new_im = Image.new('RGB', (total_width, max_height))
+        new_im.paste(images[0], (0,0))
+        new_im.paste(images[0], (0,max_height-100))
+        new_im.paste(images[1], (0,100))
+        new_im.paste(images[1], (total_width-100,100))
+        new_im.paste(images[2], (100,100))
+        d1 = ImageDraw.Draw(new_im)
+        font1 = ImageFont.truetype("arial.ttf", 100)
+        font2 = ImageFont.truetype("arial.ttf", 60)
+        font3 = ImageFont.truetype("arial.ttf", 30)
+
+        # title
+        msg = "Today"
+        w, h = d1.textsize(msg, font=font1)
+        d1.text(((total_width-w)/2,max_height*.05), msg, fill=(255, 255, 0), font=font1)
+        #icon
+        icon = Image.open(forecasts[i].icon)
+        w,h = icon.size
+        factor = 3
+        tn_image = icon.resize((int(w * factor), int(h * factor)))
+        new_im.paste(tn_image, (75, 150))
+
+        # temp
+        msg = forecasts[i].temperature
+        w, h = d1.textsize(msg, font=font2)
+        d1.text(((total_width-w)/2,max_height*.8), msg + '°', fill=(255, 255, 0), font=font2)
+        # condition and chance
+        msg = str(forecasts[i].weatherconditions)
+        if msg == 'None':
+            msg = 'Clear'
+        else:
+            msg + 'chance?'
+        w, h = d1.textsize(msg, font=font3)
+        d1.text(((total_width-w)/2,max_height*.7), msg, fill=(255, 255, 0), font=font3)
+        new_im.save(str(i)+'_fc.png')
+        new_im.close()
+    
+    # tomorrow
+
+
     
       
 if __name__ == "__main__": 
