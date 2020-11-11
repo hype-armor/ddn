@@ -3,6 +3,7 @@
 import urllib.request
 import xml.etree.ElementTree as ET 
 import re
+from PIL import Image, ImageDraw, ImageFont
   
 def loadRSS(url, file): 
   
@@ -16,7 +17,16 @@ def loadRSS(url, file):
     with open(file, 'wb') as f: 
         f.write(resp.read()) 
           
-  
+
+def GetFontSize(text, max_width, max_height, draw):
+    font = ImageFont.truetype("arial.ttf", 12)
+    w, h = draw.textsize(text, font=font)
+    for i in range(13,200):
+        if w < max_width and h < max_height:
+            font = ImageFont.truetype("arial.ttf", i)
+            w, h = draw.textsize(text, font=font)
+    return w, h, font
+
 def parseXML(xmlfile, xpath): 
   
     # create element tree object 
@@ -40,7 +50,16 @@ def parseXML(xmlfile, xpath):
                 for child in item:
                     text[child.tag] = child.text.encode('utf8')
             else:
-                text[item.tag] = item.text.encode('utf8')
+                if len(item.attrib) > 0:
+                    for name, value in item.attrib.items():
+                        if name == '{http://www.w3.org/2001/XMLSchema-instance}nil':
+                            print('{0} is null'.format(name))
+                            text = None
+                        else:
+                            print('{0}={1}'.format(name,value))
+                            text[item.text] = value
+                else:
+                    text[item.tag] = item.text.encode('utf8')
 
         elif len(item.attrib) > 0:
             
@@ -68,18 +87,19 @@ class datec:
     date_str = None
     date = None
     periodname = None
-    def __init__(self, date):
+    def __init__(self, date, periodname):
         from datetime import datetime
-        self.date_str = date.decode()
+        self.date_str = date
         self.date = datetime.strptime(self.date_str, "%Y-%m-%dT%H:%M:%S-06:00")
+        self.periodname = periodname
 
 class timeframes:
     dates = None
     layoutkey = None
     def __init__(self):
         self.dates = []
-    def adddate(self, date):
-        self.dates.append(datec(date))
+    def adddate(self, date, periodname):
+        self.dates.append(datec(date, periodname))
     def addlayoutkey(self,layoutkey):
         self.layoutkey = layoutkey.decode()
 
@@ -98,19 +118,19 @@ class forecast:
      
 def main(): 
     # load rss from web to update existing xml file 
-    #loadRSS('https://forecast.weather.gov/MapClick.php?lat=36.1747&lon=-95.9398&unit=0&lg=english&FcstType=dwml','forecast.xml') 
+    loadRSS('https://forecast.weather.gov/MapClick.php?lat=36.1747&lon=-95.9398&unit=0&lg=english&FcstType=dwml','forecast.xml') 
     
     # parse xml file 
     fulltimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[1]/")
     daystimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[2]/")
     nighttimes = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[3]/")
 
-    
+    #periodname = parseXML('forecast.xml', "./data[@type='forecast']/time-layout[1]/start-valid-time[@period-name]")
 
     
     
     #conditionsicon = parseXML('forecast.xml', "./data[@type='forecast']/parameters/conditions-icon[@time-layout='k-p12h-n13-1']/")
-    hazards = parseXML('forecast.xml', "./data[@type='forecast']/parameters/hazards/")
+    #hazards = parseXML('forecast.xml', "./data[@type='forecast']/parameters/hazards/")
 
     
 
@@ -121,7 +141,7 @@ def main():
             if name == 'layout-key':
                 fulls.addlayoutkey(value)
             else:
-                fulls.adddate(value)
+                fulls.adddate(name, value)
 
     # create day class
     days = timeframes()
@@ -130,7 +150,7 @@ def main():
             if name == 'layout-key':
                 days.addlayoutkey(value)
             else:
-                days.adddate(value)
+                days.adddate(name, value)
     # create night class
     nights = timeframes()
     for times in nighttimes:
@@ -138,7 +158,7 @@ def main():
             if name == 'layout-key':
                 nights.addlayoutkey(value)
             else:
-                nights.adddate(value)
+                nights.adddate(name, value)
 
     # populate forecast data into full days.
     forecasts = []
@@ -146,9 +166,6 @@ def main():
     weather = parseXML('forecast.xml', "./data[@type='forecast']/parameters/weather[@time-layout='{0}']/".format(fulls.layoutkey))
     conditionsicon = parseXML('forecast.xml', "./data[@type='forecast']/parameters/conditions-icon[@time-layout='{0}']/".format(fulls.layoutkey))
     for i in range(1,len(fulls.dates)):
-        date = fulls.dates[i]
-        
-        
         if probabilityofprecipitation[i] == None:
             chance = str(probabilityofprecipitation[i])
         else:
@@ -158,12 +175,12 @@ def main():
         for ii in range(len(days.dates)):
             if fulls.dates[i].date_str == days.dates[ii].date_str:
                 maxtemp = parseXML('forecast.xml', "./data[@type='forecast']/parameters/temperature[@time-layout='{0}']/".format(days.layoutkey))
-                temperature = 'H ' + [*maxtemp[ii+1].values()][0].decode()
+                temperature = [*maxtemp[ii+1].values()][0].decode()
 
         for ii in range(len(nights.dates)):
             if fulls.dates[i].date_str == nights.dates[ii].date_str:
                 mintemp = parseXML('forecast.xml', "./data[@type='forecast']/parameters/temperature[@time-layout='{0}']/".format(nights.layoutkey))
-                temperature = 'L ' + [*mintemp[ii+1].values()][0].decode()
+                temperature = [*mintemp[ii+1].values()][0].decode()
 
         fc = forecast(fulls.dates[i],fulls.layoutkey)
         fc.temperature = temperature
@@ -177,58 +194,50 @@ def main():
     newmethod225(forecasts)
 
 def newmethod225(forecasts):
-    from PIL import Image, ImageDraw, ImageFont
+    
     # rest of today
-    images = [Image.open(x) for x in ['top-bottom.png', 'sides.png', 'middle.png']]
+    #images = [Image.open(x) for x in ['top-bottom.png', 'sides.png', 'middle.png']]
     #widths, heights = zip(*(i.size for i in images))
-
-    total_width = 400
+    bgimg = Image.open('ddnweatherpanel.png')
+    max_width = 400
     max_height = 600
     for i in range(len(forecasts)):
-        new_im = Image.new('RGB', (total_width, max_height))
-        new_im.paste(images[0], (0,0))
-        new_im.paste(images[0], (0,max_height-100))
-        new_im.paste(images[1], (0,100))
-        new_im.paste(images[1], (total_width-100,100))
-        new_im.paste(images[2], (100,100))
+        new_im = Image.new('RGB', (max_width, max_height))
+        new_im.paste(bgimg, (0,0))
         d1 = ImageDraw.Draw(new_im)
-        font1 = ImageFont.truetype("arial.ttf", 100)
-        font2 = ImageFont.truetype("arial.ttf", 60)
-        font3 = ImageFont.truetype("arial.ttf", 30)
 
         # title
-        msg = "Today"
-        w, h = d1.textsize(msg, font=font1)
-        d1.text(((total_width-w)/2,max_height*.05), msg, fill=(255, 255, 0), font=font1)
+        msg = forecasts[i].date.periodname
+        w, h, font = GetFontSize(msg, max_width*.9, 50, d1)
+        d1.text(((max_width-w)/2,max_height*.04), msg, fill=(255, 255, 255), font=font)
         #icon
         icon = Image.open(forecasts[i].icon)
         w,h = icon.size
         factor = 3
         tn_image = icon.resize((int(w * factor), int(h * factor)))
-        new_im.paste(tn_image, (75, 150))
+        new_im.paste(tn_image, (70, 180))
 
         # temp
-        msg = forecasts[i].temperature
-        w, h = d1.textsize(msg, font=font2)
-        d1.text(((total_width-w)/2,max_height*.8), msg + '°', fill=(255, 255, 0), font=font2)
+        msg = forecasts[i].temperature + '°'
+        w, h, font = GetFontSize(msg, max_width, 60, d1)
+        #w, h = d1.textsize(msg, font=font2)
+        d1.text((((max_width-w)/2)*0.1,max_height*.87), msg, fill=(255, 255, 255), font=font)
+
         # condition and chance
         msg = str(forecasts[i].weatherconditions)
         if msg == 'None':
             msg = 'Clear'
         else:
             msg + 'chance?'
-        w, h = d1.textsize(msg, font=font3)
-        d1.text(((total_width-w)/2,max_height*.7), msg, fill=(255, 255, 0), font=font3)
+        msg = msg.replace(' then ', '\n')
+        w, h, font = GetFontSize(msg, max_width*.95, 50, d1)
+        d1.text(((max_width-w)/2,max_height*.79), msg, fill=(255, 255, 255), font=font)
         new_im.save(str(i)+'_fc.png')
         new_im.close()
     
     # tomorrow
 
-
-    
-      
 if __name__ == "__main__": 
   
     # calling main function 
     main()
-    
