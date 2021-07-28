@@ -191,9 +191,9 @@ def main():
         forecasts.append(fc)
 
 
-    newmethod225(forecasts)
+    buildgraphics(forecasts)
 
-def newmethod225(forecasts):
+def buildgraphics(forecasts):
     
     # rest of today
     #images = [Image.open(x) for x in ['top-bottom.png', 'sides.png', 'middle.png']]
